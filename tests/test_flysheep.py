@@ -10,8 +10,10 @@ PLUGIN_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PLUGIN_DIR))
 
 from flysheep import (  # noqa: E402
+    build_search_url,
     clean_intro,
     format_report,
+    format_search_report,
     next_daily_run,
     parse_category_ids,
     parse_wordpress_post,
@@ -79,6 +81,41 @@ class FlysheepCoreTests(unittest.TestCase):
         self.assertIn("[小游戏/独立游戏] 测试游戏", report)
         self.assertIn("简介：测试简介", report)
         self.assertIn("链接：https://example.test/game", report)
+
+    def test_search_report_preserves_relevance_order_and_adds_search_url(self) -> None:
+        def make_post(post_id: int, title: str, date: str):
+            return parse_wordpress_post(
+                {
+                    "id": post_id,
+                    "date_gmt": date,
+                    "title": {"rendered": title},
+                    "link": f"https://example.test/{post_id}",
+                    "categories": [4],
+                    "excerpt": {"rendered": f"{title}简介"},
+                    "content": {"rendered": ""},
+                },
+                "Asia/Shanghai",
+                100,
+            )
+
+        posts = [
+            make_post(1, "最相关结果", "2020-01-01T00:00:00"),
+            make_post(2, "较新结果", "2026-01-01T00:00:00"),
+        ]
+        report = format_search_report(posts, "创世秩序")
+        self.assertLess(report.index("最相关结果"), report.index("较新结果"))
+        self.assertIn("[PC单机大作] 最相关结果", report)
+        self.assertIn("简介：最相关结果简介", report)
+        self.assertIn(
+            "https://www.flysheep6.com/?s=%E5%88%9B%E4%B8%96%E7%A7%A9%E5%BA%8F",
+            report,
+        )
+
+    def test_build_search_url_encodes_spaces_and_unicode(self) -> None:
+        self.assertEqual(
+            build_search_url(" 最后 生还者 "),
+            "https://www.flysheep6.com/?s=%E6%9C%80%E5%90%8E+%E7%94%9F%E8%BF%98%E8%80%85",
+        )
 
     def test_local_date_fallback_is_not_treated_as_utc(self) -> None:
         raw = {

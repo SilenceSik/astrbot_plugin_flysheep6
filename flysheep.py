@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from html.parser import HTMLParser
 from typing import Any, Iterable
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 
@@ -179,6 +180,29 @@ def format_report(posts: list[GamePost], days: int) -> str:
                 "",
             )
         )
+    return "\n".join(lines).rstrip()
+
+
+def build_search_url(
+    keyword: str, site_url: str = "https://www.flysheep6.com/"
+) -> str:
+    return f"{site_url.rstrip('/')}/?{urlencode({'s': keyword.strip()})}"
+
+
+def format_search_report(posts: list[GamePost], keyword: str) -> str:
+    lines = [f"【flysheep 定向搜索】{keyword}（{len(posts)} 款）", ""]
+    for index, post in enumerate(posts, start=1):
+        directory = "/".join(post.directories)
+        lines.extend(
+            (
+                f"{index}. [{directory}] {post.title}",
+                f"发布：{post.published_at:%Y-%m-%d}",
+                f"简介：{post.intro}",
+                f"链接：{post.link}",
+                "",
+            )
+        )
+    lines.append(f"站内搜索：{build_search_url(keyword)}")
     return "\n".join(lines).rstrip()
 
 

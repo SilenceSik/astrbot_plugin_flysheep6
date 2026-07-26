@@ -13,10 +13,13 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.core.message.message_event_result import MessageChain
+from astrbot.core.star.filter.command import GreedyStr
 
 from .flysheep import (
     GamePost,
+    build_search_url,
     format_report,
+    format_search_report,
     next_daily_run,
     parse_category_ids,
     parse_wordpress_post,
@@ -31,8 +34,8 @@ DEFAULT_API_URL = "https://www.flysheep6.com/wp-json/wp/v2/posts"
 @register(
     PLUGIN_NAME,
     "chen",
-    "每天查询 flysheep 资源避难所最近三天发布的游戏，附目录、简介和原文链接。",
-    "v1.0.0",
+    "每天完整推送 flysheep 最近三天游戏，并支持按关键词定向搜索。",
+    "v1.1.0",
 )
 class Flysheep6Plugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -71,6 +74,27 @@ class Flysheep6Plugin(Star):
             logger.exception("[flysheep6] 手动查询失败")
             yield event.plain_result(f"查询 flysheep 失败：{exc}")
 
+    @filter.command("避难所搜索")
+    async def search_games(self, event: AstrMessageEvent, keyword: GreedyStr):
+        """按游戏名或关键词定向搜索站点文章。"""
+        keyword = keyword.strip()
+        if not keyword:
+            yield event.plain_result("用法：/避难所搜索 游戏名")
+            return
+        try:
+            posts = await self._fetch_search_games(keyword)
+            if not posts:
+                yield event.plain_result(
+                    f"flysheep 没有找到“{keyword}”相关游戏。\n"
+                    f"站内搜索：{build_search_url(keyword)}"
+                )
+                return
+            for chunk in self._search_report_chunks(posts, keyword):
+                yield event.plain_result(chunk)
+        except Exception as exc:
+            logger.exception("[flysheep6] 定向搜索失败：%s", keyword)
+            yield event.plain_result(f"搜索 flysheep 失败：{exc}")
+
     @filter.command("避难所订阅")
     @filter.permission_type(filter.PermissionType.ADMIN)
     async def subscribe(self, event: AstrMessageEvent):
@@ -85,7 +109,8 @@ class Flysheep6Plugin(Star):
         self.config.save_config()
         logger.info("[flysheep6] 新增订阅会话：%s", target)
         yield event.plain_result(
-            f"已订阅当前会话，每天 {self._push_time()} 推送新增游戏。"
+            f"已订阅当前会话，每天 {self._push_time()} 推送最近"
+            f"{self._days()}天完整游戏列表。"
         )
 
     @filter.command("避难所退订")
@@ -120,6 +145,8 @@ class Flysheep6Plugin(Star):
             f"定时推送：{'开启' if enabled else '关闭'}\n"
             f"订阅会话：{len(self._targets())} 个\n"
             f"查询范围：最近 {self._days()} 天\n"
+            "推送模式："
+            f"{'只推送未发送文章' if self._bool_config('only_new_on_schedule', False) else '每天完整推送'}\n"
             f"推送时间：{self._push_time()} ({self._timezone_name()})\n"
             f"下次运行：{next_run}\n"
             f"最近查询：{last_check}\n"
@@ -190,7 +217,7 @@ class Flysheep6Plugin(Star):
                     if self._bool_config("notify_empty", False):
                         await self._send_text(
                             target,
-                            f"flysheep 最近{self._days()}天暂无未推送的新游戏。",
+                            f"flysheep 最近{self._days()}天没有找到游戏。",
                         )
                     continue
                 for chunk in self._report_chunks(target_posts):
@@ -292,14 +319,80 @@ class Flysheep6Plugin(Star):
             posts.sort(key=lambda item: item.published_at, reverse=True)
             return posts[: self._int_config("max_items", 30, 1, 100)]
 
+    async def _fetch_search_games(self, keyword: str) -> list[GamePost]:
+        async with self._fetch_lock:
+            max_items = self._int_config("search_max_items", 10, 1, 30)
+            params = {
+                "per_page": str(max_items),
+                "search": keyword,
+                "orderby": "relevance",
+                "_fields": (
+                    "id,date_gmt,date,link,title,excerpt,content,categories"
+                ),
+            }
+            category_ids = parse_category_ids(
+                self.config.get("category_ids", "4,5,32,72")
+            )
+            if category_ids:
+                params["categories"] = ",".join(map(str, category_ids))
+
+            timeout = aiohttp.ClientTimeout(
+                total=self._int_config("request_timeout", 20, 5, 60)
+            )
+            headers = {
+                "Accept": "application/json",
+                "User-Agent": "AstrBot-Flysheep6/1.1",
+            }
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+                async with session.get(self._api_url(), params=params) as response:
+                    if response.status != 200:
+                        body = (await response.text())[:300]
+                        raise RuntimeError(
+                            f"网站 API 返回 HTTP {response.status}: {body}"
+                        )
+                    payload = await response.json(content_type=None)
+            if not isinstance(payload, list):
+                raise RuntimeError("网站 API 返回了非列表数据")
+
+            posts: list[GamePost] = []
+            parsed_ids: set[int] = set()
+            for raw in payload:
+                if not isinstance(raw, dict):
+                    continue
+                try:
+                    post = parse_wordpress_post(
+                        raw,
+                        self._timezone_name(),
+                        self._int_config("intro_length", 100, 40, 300),
+                    )
+                except (KeyError, TypeError, ValueError) as exc:
+                    logger.warning(
+                        "[flysheep6] 跳过无法解析的搜索结果 id=%s: %s",
+                        raw.get("id"),
+                        exc,
+                    )
+                    continue
+                if post.post_id not in parsed_ids:
+                    posts.append(post)
+                    parsed_ids.add(post.post_id)
+            return posts
+
     def _report_chunks(self, posts: list[GamePost]) -> list[str]:
         return split_report(
             format_report(posts, self._days()),
             self._int_config("max_message_chars", 3500, 500, 10000),
         )
 
+    def _search_report_chunks(
+        self, posts: list[GamePost], keyword: str
+    ) -> list[str]:
+        return split_report(
+            format_search_report(posts, keyword),
+            self._int_config("max_message_chars", 3500, 500, 10000),
+        )
+
     def _unsent_posts(self, target: str, posts: list[GamePost]) -> list[GamePost]:
-        if not self._bool_config("only_new_on_schedule", True):
+        if not self._bool_config("only_new_on_schedule", False):
             return posts
         stored_ids = self._state.get("sent_ids", {}).get(target, [])
         sent_ids = set(stored_ids) if isinstance(stored_ids, list) else set()

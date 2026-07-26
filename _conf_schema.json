@@ -39,6 +39,11 @@
     "type": "int",
     "default": 30
   },
+  "search_max_items": {
+    "description": "定向搜索最多展示的游戏数",
+    "type": "int",
+    "default": 10
+  },
   "intro_length": {
     "description": "每款游戏简介最大字符数",
     "type": "int",
@@ -53,10 +58,10 @@
   "only_new_on_schedule": {
     "description": "定时任务只推送尚未推送过的文章",
     "type": "bool",
-    "default": true
+    "default": false
   },
   "notify_empty": {
-    "description": "没有新增游戏时也发送提示",
+    "description": "最近查询范围内没有游戏时也发送提示",
     "type": "bool",
     "default": false
   },
