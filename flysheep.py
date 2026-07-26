@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import html
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from html.parser import HTMLParser
 from typing import Any, Iterable
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 
@@ -15,6 +18,16 @@ CATEGORY_NAMES = {
     5: "VR游戏",
     32: "小游戏/独立游戏",
     72: "模拟器整合游戏",
+}
+
+HTTP_HEADERS = {
+    "Accept": "application/json,text/plain,*/*",
+    "Accept-Language": "zh-CN,zh;q=0.9",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/138.0.0.0 Safari/537.36"
+    ),
 }
 
 
@@ -141,6 +154,36 @@ def parse_category_ids(value: object) -> list[int]:
         if category_id > 0 and category_id not in result:
             result.append(category_id)
     return result
+
+
+def fetch_wordpress_page(
+    api_url: str, params: dict[str, str], timeout: int
+) -> tuple[Any, dict[str, str]]:
+    separator = (
+        "" if api_url.endswith(("?", "&")) else ("&" if "?" in api_url else "?")
+    )
+    request = Request(
+        f"{api_url}{separator}{urlencode(params)}",
+        headers=HTTP_HEADERS,
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            status = int(getattr(response, "status", 200))
+            body = response.read()
+            response_headers = dict(response.headers.items())
+    except HTTPError as exc:
+        body = exc.read(300).decode("utf-8", errors="replace")
+        raise RuntimeError(f"网站 API 返回 HTTP {exc.code}: {body}") from exc
+    except (URLError, TimeoutError, OSError) as exc:
+        raise RuntimeError(f"网站 API 请求失败：{exc}") from exc
+
+    if status != 200:
+        preview = body[:300].decode("utf-8", errors="replace")
+        raise RuntimeError(f"网站 API 返回 HTTP {status}: {preview}")
+    try:
+        return json.loads(body.decode("utf-8-sig")), response_headers
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("网站 API 返回了无法解析的 JSON") from exc
 
 
 def next_daily_run(now: datetime, push_time: str, timezone_name: str) -> datetime:

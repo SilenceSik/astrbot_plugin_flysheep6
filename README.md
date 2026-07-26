@@ -25,6 +25,6 @@ AstrBot 插件：每天查询 [flysheep 资源避难所](https://www.flysheep6.c
 
 ## 安装
 
-在 AstrBot 插件管理页通过仓库地址 `https://github.com/SilenceSik/astrbot_plugin_flysheep6` 安装，或将整个 `astrbot_plugin_flysheep6` 目录放入 AstrBot 的 `data/plugins/` 后重载插件。插件只使用 AstrBot 已自带的 `aiohttp`，没有额外 Python 依赖。
+在 AstrBot 插件管理页通过仓库地址 `https://github.com/SilenceSik/astrbot_plugin_flysheep6` 安装，或将整个 `astrbot_plugin_flysheep6` 目录放入 AstrBot 的 `data/plugins/` 后重载插件。插件使用 Python 标准库访问站点，没有额外 Python 依赖。
 
 订阅会话最简单的方式，是在目标群聊或私聊里由管理员发送 `/避难所订阅`。也可以在配置页直接填写 AstrBot 的 `unified_msg_origin` 到 `targets` 列表。

@@ -4,6 +4,8 @@ import sys
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
+from urllib.error import URLError
 
 
 PLUGIN_DIR = Path(__file__).resolve().parents[1]
@@ -12,6 +14,7 @@ sys.path.insert(0, str(PLUGIN_DIR))
 from flysheep import (  # noqa: E402
     build_search_url,
     clean_intro,
+    fetch_wordpress_page,
     format_report,
     format_search_report,
     next_daily_run,
@@ -22,6 +25,39 @@ from flysheep import (  # noqa: E402
 
 
 class FlysheepCoreTests(unittest.TestCase):
+    def test_fetch_wordpress_page_uses_browser_headers_and_parses_json(self) -> None:
+        class FakeResponse:
+            status = 200
+            headers = {"X-WP-TotalPages": "2"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            def read(self):
+                return b'[{"id": 1}]'
+
+        with patch("flysheep.urlopen", return_value=FakeResponse()) as mocked:
+            payload, headers = fetch_wordpress_page(
+                "https://example.test/posts", {"search": "最后 生还者"}, 20
+            )
+
+        request = mocked.call_args.args[0]
+        self.assertEqual(payload, [{"id": 1}])
+        self.assertEqual(headers["X-WP-TotalPages"], "2")
+        self.assertIn(
+            "search=%E6%9C%80%E5%90%8E+%E7%94%9F%E8%BF%98%E8%80%85",
+            request.full_url,
+        )
+        self.assertIn("Mozilla/5.0", request.get_header("User-agent"))
+
+    def test_fetch_wordpress_page_wraps_connection_errors(self) -> None:
+        with patch("flysheep.urlopen", side_effect=URLError("disconnected")):
+            with self.assertRaisesRegex(RuntimeError, "网站 API 请求失败"):
+                fetch_wordpress_page("https://example.test/posts", {}, 20)
+
     def test_parse_post_cleans_html_and_configuration_text(self) -> None:
         post = parse_wordpress_post(
             {

@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-import aiohttp
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, StarTools, register
@@ -16,6 +15,7 @@ from astrbot.core.star.filter.command import GreedyStr
 from .flysheep import (
     GamePost,
     build_search_url,
+    fetch_wordpress_page,
     format_report,
     format_search_report,
     next_daily_run,
@@ -33,7 +33,7 @@ DEFAULT_API_URL = "https://www.flysheep6.com/wp-json/wp/v2/posts"
     PLUGIN_NAME,
     "chen",
     "每天完整推送 flysheep 最近三天游戏，并支持按关键词定向搜索。",
-    "v1.1.1",
+    "v1.1.2",
 )
 class Flysheep6Plugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -258,36 +258,27 @@ class Flysheep6Plugin(Star):
             if category_ids:
                 params["categories"] = ",".join(map(str, category_ids))
 
-            timeout = aiohttp.ClientTimeout(
-                total=self._int_config("request_timeout", 20, 5, 60)
-            )
-            headers = {
-                "Accept": "application/json",
-                "User-Agent": "AstrBot-Flysheep6/1.0",
-            }
             raw_posts: list[dict[str, Any]] = []
             total_pages = 1
-            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-                for page in range(1, 4):
-                    page_params = {**params, "page": str(page)}
-                    async with session.get(self._api_url(), params=page_params) as response:
-                        if response.status != 200:
-                            body = (await response.text())[:300]
-                            raise RuntimeError(
-                                f"网站 API 返回 HTTP {response.status}: {body}"
-                            )
-                        try:
-                            total_pages = min(
-                                3, int(response.headers.get("X-WP-TotalPages", "1"))
-                            )
-                        except ValueError:
-                            total_pages = 1
-                        payload = await response.json(content_type=None)
-                    if not isinstance(payload, list):
-                        raise RuntimeError("网站 API 返回了非列表数据")
-                    raw_posts.extend(item for item in payload if isinstance(item, dict))
-                    if page >= total_pages or len(payload) < 100:
-                        break
+            for page in range(1, 4):
+                page_params = {**params, "page": str(page)}
+                payload, response_headers = await asyncio.to_thread(
+                    fetch_wordpress_page,
+                    self._api_url(),
+                    page_params,
+                    self._int_config("request_timeout", 20, 5, 60),
+                )
+                try:
+                    total_pages = min(
+                        3, int(response_headers.get("X-WP-TotalPages", "1"))
+                    )
+                except ValueError:
+                    total_pages = 1
+                if not isinstance(payload, list):
+                    raise RuntimeError("网站 API 返回了非列表数据")
+                raw_posts.extend(item for item in payload if isinstance(item, dict))
+                if page >= total_pages or len(payload) < 100:
+                    break
 
             posts: list[GamePost] = []
             parsed_ids: set[int] = set()
@@ -334,21 +325,12 @@ class Flysheep6Plugin(Star):
             if category_ids:
                 params["categories"] = ",".join(map(str, category_ids))
 
-            timeout = aiohttp.ClientTimeout(
-                total=self._int_config("request_timeout", 20, 5, 60)
+            payload, _ = await asyncio.to_thread(
+                fetch_wordpress_page,
+                self._api_url(),
+                params,
+                self._int_config("request_timeout", 20, 5, 60),
             )
-            headers = {
-                "Accept": "application/json",
-                "User-Agent": "AstrBot-Flysheep6/1.1",
-            }
-            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-                async with session.get(self._api_url(), params=params) as response:
-                    if response.status != 200:
-                        body = (await response.text())[:300]
-                        raise RuntimeError(
-                            f"网站 API 返回 HTTP {response.status}: {body}"
-                        )
-                    payload = await response.json(content_type=None)
             if not isinstance(payload, list):
                 raise RuntimeError("网站 API 返回了非列表数据")
 
