@@ -1,6 +1,6 @@
 name: astrbot_plugin_flysheep6
 display_name: flysheep6 游戏日报
 desc: 每天完整推送 flysheep 资源避难所最近三天的游戏，按目录展示简介和原文链接，并支持关键词定向搜索。
-version: v1.1.0
+version: v1.1.1
 author: chen
 repo: https://github.com/SilenceSik/astrbot_plugin_flysheep6

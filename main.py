@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import json
@@ -35,7 +33,7 @@ DEFAULT_API_URL = "https://www.flysheep6.com/wp-json/wp/v2/posts"
     PLUGIN_NAME,
     "chen",
     "每天完整推送 flysheep 最近三天游戏，并支持按关键词定向搜索。",
-    "v1.1.0",
+    "v1.1.1",
 )
 class Flysheep6Plugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
